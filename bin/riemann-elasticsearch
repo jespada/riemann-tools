@@ -1,0 +1,82 @@
+#!/usr/bin/env ruby
+
+require 'rubygems'
+require 'net/http'
+require 'yajl/json_gem'
+require 'riemann/tools'
+
+class Riemann::Tools::ElasticSearch
+  include Riemann::Tools
+
+  opt :es_host, "ElasticSearch host", :default => Socket.gethostname
+  opt :es_port, "ElasticSearch port", :default => 9200
+  opt :fd_warning, "Fraction of allowed fds before warning", :default => 0.75
+  opt :fd_critical, "Fraction of allowed fds before critical", :default => 0.85
+
+  def initialize
+    @client = Net::HTTP.new(opts[:es_host], opts[:es_port])
+  end
+
+  def check_cluster 
+    es_state = {"green" => "ok", "yellow" => "warning", "red" => "critical"}
+
+    get("cluster", "/_cluster/health") do |res|
+      state = es_state[res["status"]]
+      [state, nil]
+    end
+  end
+
+  def check_fds
+    get("open fds", "/_cluster/nodes/#{opts[:es_host]}") do |res|
+      pid = res["nodes"].first.last["jvm"]["pid"].to_s
+      num = Dir.glob("/proc/" + pid + "/fd/*").size
+      limit = File.read("/proc/" + pid + "/limits")[/Max open files\s+\d+\s+(\d+)/, 1].to_i
+
+      fraction = num.to_f/limit
+
+      state = if fraction > opts[:fd_critical]
+                "critical"
+              elsif fraction > opts[:fd_warning]
+                "warning"
+              else
+                "ok"
+              end
+
+      [state, fraction]
+    end
+  end
+
+  def get(s, url)
+    service = "elasticsearch " + s
+    begin
+      r = @client.get url 
+    rescue Exception => e
+      report(:service => service,
+             :state => "critical",
+             :description => "Could not retrieve #{url}: #{e.class}, #{e.message}")
+      return
+    end
+
+    if r.code.to_i != 200
+      report( 
+        :service => service,
+        :state => "critical",
+        :description => "#{service} returned #{r.code}")
+      return
+    end
+
+    state, metric = yield JSON.parse(r.body)
+
+    report(:service => service,
+           :state => state,
+           :metric => metric,
+           :description => service)
+  end
+
+  def tick
+    check_cluster
+    check_fds
+  end
+end
+
+Riemann::Tools::ElasticSearch.run
