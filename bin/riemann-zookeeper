@@ -43,6 +43,7 @@ class Riemann::Tools::Zookeeper
 
         report(:service => "zookeeper health",
                :state => "ok")
+        sock.close
       end
     rescue Timeout::Error
       report(:service => "zookeeper health",
