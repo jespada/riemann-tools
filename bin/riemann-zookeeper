@@ -1,0 +1,55 @@
+#!/usr/bin/env ruby
+#
+require 'rubygems'
+require 'riemann/tools'
+require 'socket'
+require 'timeout'
+
+class Riemann::Tools::Zookeeper
+  include Riemann::Tools
+
+  opt :zk_host, "Host to monitor", :type => :string, :default => "127.0.0.1"
+  opt :zk_port, "Zookeeper port", :type => :int, :default => 2181
+
+  def initialize
+    @old_state = nil
+  end
+
+  def tick
+    begin
+      Timeout::timeout(30) do
+        sock = TCPSocket.new opts[:zk_host], opts[:zk_port]
+        sock.sync = true
+        sock.puts "stats"
+        v = sock.readlines.inject({}) do |acc, line|
+          if m = line.chomp.scan(/^(.*): (.*)$/).first
+            acc[m[0]] = m[1]
+          end
+          acc
+        end
+
+        ["Outstanding", "Received", "Sent", "Node Count"].each do |m|
+          report(:service => "zookeeper " + m.downcase,
+                 :state => "ok",
+                 :metric => v[m].to_i)
+        end
+
+        v["Latency min/avg/max"].split(/\//).inject(["min", "avg", "max"]) do |svc, metric|
+          report(:service => "zookeeper latency " + svc.shift,
+                 :state => "ok",
+                 :metric => metric.to_i)
+          svc
+        end
+
+        report(:service => "zookeeper health",
+               :state => "ok")
+      end
+    rescue Timeout::Error
+      report(:service => "zookeeper health",
+             :state => "critical",
+             :description => "Timeout while retrieving stats from Zookeeper")
+    end
+  end
+end
+
+Riemann::Tools::Zookeeper.run
