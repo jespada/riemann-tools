@@ -28,7 +28,7 @@ class Riemann::Tools::Zookeeper
           acc
         end
 
-        ["Outstanding", "Received", "Sent", "Node Count"].each do |m|
+        ["Outstanding", "Received", "Sent", "Node count"].each do |m|
           report(:service => "zookeeper " + m.downcase,
                  :state => "ok",
                  :metric => v[m].to_i)
